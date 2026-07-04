@@ -14,7 +14,11 @@
 --   The box is a purely visual overlay -- input is NOT blocked, so the player can
 --   still use the song wheel and sort menu behind it.
 --
--- Output: /Save/PlayerLoadHook/{P1,P2}.json (full profile dump) + trigger.txt.
+-- On session end / profile unload (ScreenGameOver, or returning to the title
+-- screen), the per-player JSON files are emptied and trigger.txt is updated.
+--
+-- Output: /Save/PlayerLoadHook/{P1,P2}.json (full profile dump) + trigger.txt
+-- (contains "players_loaded"/<time> on load, "players_unloaded"/<time> on unload).
 --
 -- Why here and not on ScreenProfileLoad: SL's ScreenProfileLoad auto-advances
 -- after ~1s (its overlay calls Continue()), and the module wrapper hides a
@@ -118,6 +122,19 @@ local function WritePlayerFiles()
 		"players_loaded\n"..tostring(GetTimeSinceStart()).."\n")
 
 	Trace("[PlayerLoadHook] wrote player profile JSON to /Save/PlayerLoadHook/")
+end
+
+-- Called when the session ends and profiles are unloaded (end of game / return
+-- to title). Empties the per-player JSON files and updates the trigger.
+local function ClearPlayerFiles()
+	-- Opening in write mode truncates, so this leaves each file empty.
+	WriteFile("/Save/PlayerLoadHook/P1.json", "")
+	WriteFile("/Save/PlayerLoadHook/P2.json", "")
+
+	WriteFile("/Save/PlayerLoadHook/trigger.txt",
+		"players_unloaded\n"..tostring(GetTimeSinceStart()).."\n")
+
+	Trace("[PlayerLoadHook] cleared player JSON (profiles unloaded)")
 end
 
 local RELOAD_HOSTS = {
@@ -225,8 +242,15 @@ t["ScreenSelectMusic"]       = MakeGate()
 t["ScreenSelectMusicCasual"] = MakeGate()
 t["ScreenSelectCourse"]      = MakeGate()
 
--- Reset the once-per-cycle guard whenever a new game cycle begins at the title.
-t["ScreenTitleMenu"] = Def.Actor{ ModuleCommand=function(self) hasRun = false end }
-t["ScreenTitleJoin"] = Def.Actor{ ModuleCommand=function(self) hasRun = false end }
+-- Profiles are unloaded when the session ends. In event mode the profile stays
+-- loaded between songs (you return to song select), so we must NOT clear there --
+-- only at the genuine end points:
+--   * ScreenGameOver -- the explicit end-of-game screen.
+--   * ScreenTitleMenu / ScreenTitleJoin -- reaching the title (also covers backing
+--     out of song select, and the case where ScreenGameOver is disabled). This is
+--     also where we reset the once-per-cycle guard for the next profile load.
+t["ScreenGameOver"] = Def.Actor{ ModuleCommand=function(self) ClearPlayerFiles() end }
+t["ScreenTitleMenu"] = Def.Actor{ ModuleCommand=function(self) hasRun = false; ClearPlayerFiles() end }
+t["ScreenTitleJoin"] = Def.Actor{ ModuleCommand=function(self) hasRun = false; ClearPlayerFiles() end }
 
 return t
