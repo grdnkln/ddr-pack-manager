@@ -211,6 +211,21 @@ local function AddBoxVisuals(af, labelText)
 	return af
 end
 
+-- A joined player "counts" for pack loading only if they loaded a real Player
+-- Profile (local or USB/memory card -> IsPersistentProfile) or logged into
+-- GrooveStats (a non-empty ApiKey). Pure guests -- no profile, no GrooveStats --
+-- get none of the pack load/unload behavior.
+local function AnyHumanPlayerQualifies()
+	for player in ivalues(GAMESTATE:GetHumanPlayers()) do
+		local pn = ToEnumShortString(player)
+		if PROFILEMAN:IsPersistentProfile(player)
+		or (SL[pn].ApiKey ~= nil and SL[pn].ApiKey ~= "") then
+			return true
+		end
+	end
+	return false
+end
+
 -- The "Setting up song packs" gate, hosted on each song-select screen. One is
 -- created per host screen; they all share the upvalues above.
 local function MakeGate()
@@ -222,6 +237,12 @@ local function MakeGate()
 		ModuleCommand=function(self)
 			if hasRun then return end
 			hasRun = true
+
+			-- Guest-only session (no profile, no GrooveStats)? Do nothing: no popup,
+			-- no JSON, no reload. reloadPending stays false, so the unload path skips
+			-- too. Guests just see the base song library.
+			if not AnyHumanPlayerQualifies() then return end
+
 			-- A profile is now loaded; a full cleanup reload will be owed when we
 			-- next return to the title (covers both gameover and backing out).
 			reloadPending = true
