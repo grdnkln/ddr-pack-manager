@@ -14,8 +14,18 @@
 --   The box is a purely visual overlay -- input is NOT blocked, so the player can
 --   still use the song wheel and sort menu behind it.
 --
--- On session end / profile unload (ScreenGameOver, or returning to the title
--- screen), the per-player JSON files are emptied and trigger.txt is updated.
+-- On session end / profile unload -- detected by returning to the title screen,
+-- which covers both the normal gameover flow and backing out of song select --
+-- the per-player JSON files are emptied, trigger.txt is updated, and a FULL song
+-- reload (ScreenReloadSongs) runs so packs an external worker removed from the
+-- PlayerSongs additional folder actually vanish. (Only when a profile was actually
+-- loaded that cycle, which also prevents a reload->title->reload loop.)
+--
+-- Companion setup (external to this file):
+--   Preferences.ini AdditionalSongFoldersReadOnly=<...>/PlayerSongs -- an
+--   always-mounted extra song root. A worker symlinks the players' packs into it
+--   on load and clears it on unload; the reloads here make ITGMania pick up the
+--   add (differential, on song select) and the removal (full, at gameover).
 --
 -- Output: /Save/PlayerLoadHook/{P1,P2}.json (full profile dump) + trigger.txt
 -- (contains "players_loaded"/<time> on load, "players_unloaded"/<time> on unload).
@@ -34,6 +44,10 @@
 
 local HOLD_SECONDS = 5
 local hasRun = false  -- shared across all screen entries below (file-closure upvalue)
+-- Set true once a profile has been loaded this cycle (packs may be in PlayerSongs);
+-- consumed at the title to run exactly one full cleanup reload, which also breaks
+-- the reload->title->reload loop.
+local reloadPending = false
 
 -- Write a string to a path in the engine's virtual FS.
 -- "/Save/..." maps to the real Save dir (on Linux: ~/.itgmania/Save/).
@@ -137,6 +151,14 @@ local function ClearPlayerFiles()
 	Trace("[PlayerLoadHook] cleared player JSON (profiles unloaded)")
 end
 
+-- Trigger a FULL song reload (engine ScreenReloadSongs: OnlyLoadAdditions=false),
+-- which re-scans every song root -- including the PlayerSongs additional folder --
+-- so packs whose symlinks were removed actually disappear. Its NextScreen is the
+-- title, which is exactly where we already are.
+local function TriggerFullReload()
+	SCREENMAN:SetNewScreen("ScreenReloadSongs")
+end
+
 local RELOAD_HOSTS = {
 	ScreenSelectMusic=true, ScreenSelectMusicCasual=true, ScreenSelectCourse=true,
 }
@@ -156,10 +178,37 @@ local function TriggerSongReload(screen)
 	SCREENMAN:SetNewScreen("ScreenReloadSongsSSM")
 end
 
--- Build a fresh loading-box gate actor. One is created per host screen; they all
--- share the upvalues above (so the hasRun guard is global across screens).
+-- Append the shared popup-box visuals (dim backdrop, box, colored bar, label, and
+-- a pulsing dot) to an ActorFrame table, then return it. Used by both the load and
+-- unload gates so they look identical apart from the label text.
+local function AddBoxVisuals(af, labelText)
+	af[#af+1] = Def.Quad{
+		InitCommand=function(self) self:FullScreen():diffuse(Color.Black):diffusealpha(0.82) end,
+	}
+	af[#af+1] = Def.Quad{
+		InitCommand=function(self) self:zoomto(420, 130):diffuse(color("#101519")) end,
+	}
+	af[#af+1] = Def.Quad{
+		InitCommand=function(self) self:zoomto(420, 4):y(-63):diffuse(GetCurrentColor()) end,
+	}
+	af[#af+1] = LoadFont("Common Normal")..{
+		Text=labelText,
+		InitCommand=function(self) self:y(-12):zoom(0.9):diffuse(Color.White):shadowlength(1) end,
+	}
+	af[#af+1] = LoadFont("Common Normal")..{
+		Text="●",
+		InitCommand=function(self) self:y(24):zoom(0.5):diffuse(GetCurrentColor()):diffusealpha(0.3) end,
+		OnCommand=function(self)
+			self:linear(0.5):diffusealpha(1):linear(0.5):diffusealpha(0.3):queuecommand("On")
+		end,
+	}
+	return af
+end
+
+-- The "Setting up song packs" gate, hosted on each song-select screen. One is
+-- created per host screen; they all share the upvalues above.
 local function MakeGate()
-	return Def.ActorFrame{
+	local af = Def.ActorFrame{
 		InitCommand=function(self)
 			self:Center():draworder(2000):visible(false):diffusealpha(0)
 		end,
@@ -167,6 +216,9 @@ local function MakeGate()
 		ModuleCommand=function(self)
 			if hasRun then return end
 			hasRun = true
+			-- A profile is now loaded; a full cleanup reload will be owed when we
+			-- next return to the title (covers both gameover and backing out).
+			reloadPending = true
 
 			-- 1) Popup appears. (Purely visual -- input is NOT blocked, so the
 			--    player can still use the song wheel / sort menu behind the box.)
@@ -196,43 +248,8 @@ local function MakeGate()
 				TriggerSongReload(screen)
 			end
 		end,
-
-		-- Dim the whole screen.
-		Def.Quad{
-			InitCommand=function(self)
-				self:FullScreen():diffuse(Color.Black):diffusealpha(0.82)
-			end,
-		},
-
-		-- The box.
-		Def.Quad{
-			InitCommand=function(self)
-				self:zoomto(420, 130):diffuse(color("#101519"))
-			end,
-		},
-		Def.Quad{
-			InitCommand=function(self)
-				self:zoomto(420, 4):y(-63):diffuse(GetCurrentColor())
-			end,
-		},
-
-		LoadFont("Common Normal")..{
-			Text="Setting up song packs",
-			InitCommand=function(self)
-				self:y(-12):zoom(0.9):diffuse(Color.White):shadowlength(1)
-			end,
-		},
-		-- Simple pulsing dot so it reads as "working".
-		LoadFont("Common Normal")..{
-			Text="●",
-			InitCommand=function(self)
-				self:y(24):zoom(0.5):diffuse(GetCurrentColor()):diffusealpha(0.3)
-			end,
-			OnCommand=function(self)
-				self:linear(0.5):diffusealpha(1):linear(0.5):diffusealpha(0.3):queuecommand("On")
-			end,
-		},
 	}
+	return AddBoxVisuals(af, "Setting up song packs")
 end
 
 local t = {}
@@ -242,15 +259,51 @@ t["ScreenSelectMusic"]       = MakeGate()
 t["ScreenSelectMusicCasual"] = MakeGate()
 t["ScreenSelectCourse"]      = MakeGate()
 
--- Profiles are unloaded when the session ends. In event mode the profile stays
--- loaded between songs (you return to song select), so we must NOT clear there --
--- only at the genuine end points:
---   * ScreenGameOver -- the explicit end-of-game screen.
---   * ScreenTitleMenu / ScreenTitleJoin -- reaching the title (also covers backing
---     out of song select, and the case where ScreenGameOver is disabled). This is
---     also where we reset the once-per-cycle guard for the next profile load.
-t["ScreenGameOver"] = Def.Actor{ ModuleCommand=function(self) ClearPlayerFiles() end }
-t["ScreenTitleMenu"] = Def.Actor{ ModuleCommand=function(self) hasRun = false; ClearPlayerFiles() end }
-t["ScreenTitleJoin"] = Def.Actor{ ModuleCommand=function(self) hasRun = false; ClearPlayerFiles() end }
+-- Everything that happens when we return to the title (== the session ended and
+-- the profile is unloaded). Reaching the title covers BOTH end paths: the normal
+-- gameover flow (gameover plays out, then transitions here -- so we no longer cut
+-- it short) and backing out of song select.
+--
+-- We only clear + full-reload when a profile was actually loaded this cycle
+-- (reloadPending). That does two things:
+--   * skips a spurious clear/reload at boot (title with no prior profile), and
+--   * breaks the loop -- ScreenReloadSongs returns to the title, and on that second
+--     arrival reloadPending is already false, so we don't reload again.
+local function MakeTitleHook(screenName)
+	local af = Def.ActorFrame{
+		InitCommand=function(self)
+			self:Center():draworder(2000):visible(false):diffusealpha(0)
+		end,
+
+		ModuleCommand=function(self)
+			hasRun = false
+			if not reloadPending then return end
+			reloadPending = false
+
+			-- Mirror the load flow: signal the unload, show the "Unloading song
+			-- packs" box, wait 5s (placeholder for the worker clearing symlinks),
+			-- then full-reload.
+			ClearPlayerFiles()
+			self:visible(true):linear(0.15):diffusealpha(1)
+			self:sleep(HOLD_SECONDS):queuecommand("Finish")
+		end,
+
+		FinishCommand=function(self)
+			self:linear(0.2):diffusealpha(0):queuecommand("Hide")
+		end,
+
+		HideCommand=function(self)
+			self:visible(false)
+			-- Only reload if we're still on the title (nothing else navigated away).
+			local screen = SCREENMAN:GetTopScreen()
+			if screen and screen:GetName() == screenName then
+				TriggerFullReload()
+			end
+		end,
+	}
+	return AddBoxVisuals(af, "Unloading song packs")
+end
+t["ScreenTitleMenu"] = MakeTitleHook("ScreenTitleMenu")
+t["ScreenTitleJoin"] = MakeTitleHook("ScreenTitleJoin")
 
 return t
