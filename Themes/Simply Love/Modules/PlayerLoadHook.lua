@@ -183,7 +183,10 @@ end
 -- unload gates so they look identical apart from the label text.
 local function AddBoxVisuals(af, labelText)
 	af[#af+1] = Def.Quad{
-		InitCommand=function(self) self:FullScreen():diffuse(Color.Black):diffusealpha(0.82) end,
+		-- The parent frame is Center()'d, so FullScreen() (anchored at absolute
+		-- screen top-left) would be shifted into one quadrant. A center-aligned
+		-- quad of full screen size sits correctly on the centered origin instead.
+		InitCommand=function(self) self:zoomto(_screen.w, _screen.h):diffuse(Color.Black):diffusealpha(0.82) end,
 	}
 	af[#af+1] = Def.Quad{
 		InitCommand=function(self) self:zoomto(420, 130):diffuse(color("#101519")) end,
