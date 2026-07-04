@@ -14,12 +14,15 @@
 --   The box is a purely visual overlay -- input is NOT blocked, so the player can
 --   still use the song wheel and sort menu behind it.
 --
--- On session end / profile unload -- detected by returning to the title screen,
--- which covers both the normal gameover flow and backing out of song select --
--- the per-player JSON files are emptied, trigger.txt is updated, and a FULL song
+-- On session end / profile unload -- detected at ScreenGameOver (end of a game,
+-- before the attract loop can start) or at the title (backing out of song select)
+-- -- the per-player JSON files are emptied, trigger.txt is updated, an "Unloading song
+-- packs" box shows for 5s (placeholder for the future worker), and then a FULL song
 -- reload (ScreenReloadSongs) runs so packs an external worker removed from the
--- PlayerSongs additional folder actually vanish. (Only when a profile was actually
--- loaded that cycle, which also prevents a reload->title->reload loop.)
+-- PlayerSongs additional folder actually vanish. Firing at Game Over (which stays up
+-- ~23s) means the unload is prompt and can't be bypassed by the attract loop; the
+-- reload then skips the rest of Game Over. (Only when a profile was actually loaded
+-- that cycle, which also prevents a reload->title->reload loop.)
 --
 -- Companion setup (external to this file):
 --   Preferences.ini AdditionalSongFoldersReadOnly=<...>/PlayerSongs -- an
@@ -262,17 +265,23 @@ t["ScreenSelectMusic"]       = MakeGate()
 t["ScreenSelectMusicCasual"] = MakeGate()
 t["ScreenSelectCourse"]      = MakeGate()
 
--- Everything that happens when we return to the title (== the session ended and
--- the profile is unloaded). Reaching the title covers BOTH end paths: the normal
--- gameover flow (gameover plays out, then transitions here -- so we no longer cut
--- it short) and backing out of song select.
+-- Session end / profile unload. Fired on the first end-of-session screen we hit:
+--   * ScreenGameOver -- the reliable end-of-game screen, reached BEFORE the attract
+--     loop. Reloading here (rather than at the title) is what makes the unload
+--     prompt: attract never gets a chance to bypass us. Game Over is effectively
+--     skipped in favor of a guaranteed, timely unload -- an accepted tradeoff.
+--   * ScreenTitleMenu / ScreenTitleJoin -- the backout-from-song-select path (no
+--     Game Over), and where the once-per-cycle load guard is reset.
 --
--- We only clear + full-reload when a profile was actually loaded this cycle
--- (reloadPending). That does two things:
+-- We clear the JSON, show the "Unloading song packs" box, wait 5s (placeholder for
+-- the future worker clearing symlinks), then full-reload -- only when a profile was
+-- actually loaded this cycle (reloadPending). Game Over stays up ~23s (TimerSeconds),
+-- so the 5s box completes well before it would time out into attract. reloadPending
+-- also:
 --   * skips a spurious clear/reload at boot (title with no prior profile), and
 --   * breaks the loop -- ScreenReloadSongs returns to the title, and on that second
 --     arrival reloadPending is already false, so we don't reload again.
-local function MakeTitleHook(screenName)
+local function MakeUnloadHook(screenName)
 	local af = Def.ActorFrame{
 		InitCommand=function(self)
 			self:Center():draworder(2000):visible(false):diffusealpha(0)
@@ -283,9 +292,6 @@ local function MakeTitleHook(screenName)
 			if not reloadPending then return end
 			reloadPending = false
 
-			-- Mirror the load flow: signal the unload, show the "Unloading song
-			-- packs" box, wait 5s (placeholder for the worker clearing symlinks),
-			-- then full-reload.
 			ClearPlayerFiles()
 			self:visible(true):linear(0.15):diffusealpha(1)
 			self:sleep(HOLD_SECONDS):queuecommand("Finish")
@@ -297,16 +303,19 @@ local function MakeTitleHook(screenName)
 
 		HideCommand=function(self)
 			self:visible(false)
-			-- Only reload if we're still on the title (nothing else navigated away).
+			-- Reload if we're still on the trigger screen, or have drifted to an
+			-- idle screen (attract/title, no players joined). Skip if a new session
+			-- has started (players joined) in the meantime.
 			local screen = SCREENMAN:GetTopScreen()
-			if screen and screen:GetName() == screenName then
+			if screen and (screen:GetName() == screenName or GAMESTATE:GetNumSidesJoined() == 0) then
 				TriggerFullReload()
 			end
 		end,
 	}
 	return AddBoxVisuals(af, "Unloading song packs")
 end
-t["ScreenTitleMenu"] = MakeTitleHook("ScreenTitleMenu")
-t["ScreenTitleJoin"] = MakeTitleHook("ScreenTitleJoin")
+t["ScreenGameOver"] = MakeUnloadHook("ScreenGameOver")
+t["ScreenTitleMenu"] = MakeUnloadHook("ScreenTitleMenu")
+t["ScreenTitleJoin"] = MakeUnloadHook("ScreenTitleJoin")
 
 return t
