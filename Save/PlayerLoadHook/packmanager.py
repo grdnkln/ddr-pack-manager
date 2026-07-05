@@ -67,6 +67,7 @@ def default_config():
         "player_songs": os.path.join(base, "PlayerSongs"),
         "trigger_file": os.path.join(hookdir, "trigger.txt"),
         "status_file": os.path.join(hookdir, "packmanager-status.txt"),
+        "packs_file": os.path.join(hookdir, "packs.json"),
         "p1_json_file": os.path.join(hookdir, "P1.json"),
         "p2_json_file": os.path.join(hookdir, "P2.json"),
         "log_file": os.path.join(hookdir, "packmanager.log"),
@@ -171,6 +172,34 @@ def read_username(json_path):
     return (gs.get("username") or "").strip()
 
 
+def write_packs_json(cfg):
+    """Scan SongLibrary and write the available pack folder names to packs.json (a
+    sorted JSON array of strings). The theme's Lua reads this because SongLibrary
+    itself isn't visible inside the engine's sandboxed virtual filesystem. Written
+    atomically; failures are logged but never fatal."""
+    library = cfg["song_library"]
+    path = cfg["packs_file"]
+    try:
+        names = sorted(
+            (n for n in os.listdir(library)
+             if os.path.isdir(os.path.join(library, n))
+             or os.path.islink(os.path.join(library, n))),
+            key=str.lower,
+        )
+    except OSError as e:
+        log.error("cannot list SongLibrary %s: %s", library, e)
+        return
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(names, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, path)
+        log.info("wrote %d pack name(s) to %s", len(names), path)
+    except OSError as e:
+        log.error("failed to write packs.json %s: %s", path, e)
+
+
 def load_mapping(path):
     """Load username->packs mapping. Returns {} on any problem (logged)."""
     try:
@@ -264,6 +293,9 @@ def process_event(cfg, event, stamp):
     log.info("event=%s stamp=%s", event, stamp)
     try:
         if event == "players_loaded":
+            # Refresh the pack list the Manage Packs UI reads, so newly added
+            # SongLibrary folders show up when a session starts.
+            write_packs_json(cfg)
             mapping = load_mapping(cfg["mapping_file"])
             usernames = [u for u in (read_username(cfg["p1_json_file"]),
                                      read_username(cfg["p2_json_file"])) if u]
@@ -387,6 +419,9 @@ def main():
     log.info("mapping=%s library=%s target=%s",
              cfg["mapping_file"], cfg["song_library"], cfg["player_songs"])
     write_status(cfg, "starting", "0")
+    # Publish the initial pack list so the Manage Packs UI has data even before the
+    # first load event (e.g. right after a fresh worker start).
+    write_packs_json(cfg)
 
     while True:
         try:

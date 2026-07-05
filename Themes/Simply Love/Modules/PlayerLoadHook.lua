@@ -257,7 +257,7 @@ end
 
 -- The "Setting up song packs" gate, hosted on each song-select screen. One is
 -- created per host screen; they all share the upvalues above.
-local function MakeGate()
+local function MakeGate(screenName)
 	-- Per-instance handshake state (only one gate runs per cycle via `hasRun`).
 	local pendingStamp = nil
 	local pollElapsed = 0
@@ -265,6 +265,23 @@ local function MakeGate()
 	local af = Def.ActorFrame{
 		InitCommand=function(self)
 			self:Center():draworder(2000):visible(false):diffusealpha(0)
+		end,
+
+		-- The shared "popup + write trigger + poll worker + reload" sequence. Driven by
+		-- the once-per-cycle load gate (ModuleCommand) and by an on-demand refresh
+		-- (PackManagerRefreshMessageCommand -- e.g. after ManagePacks edits mapping.json).
+		RunLoadSequenceCommand=function(self)
+			-- 1) Popup appears. (Purely visual -- input is NOT blocked, so the
+			--    player can still use the song wheel / sort menu behind the box.)
+			self:visible(true):linear(0.15):diffusealpha(1)
+
+			-- 2) Write the profile JSON + trigger for the worker.
+			pendingStamp = tostring(GetTimeSinceStart())
+			WritePlayerFiles(pendingStamp)
+
+			-- 3) Poll for the worker's ack (or time out), then reload.
+			pollElapsed = 0
+			self:queuecommand("Poll")
 		end,
 
 		ModuleCommand=function(self)
@@ -280,17 +297,18 @@ local function MakeGate()
 			-- next return to the title (covers both gameover and backing out).
 			reloadPending = true
 
-			-- 1) Popup appears. (Purely visual -- input is NOT blocked, so the
-			--    player can still use the song wheel / sort menu behind the box.)
-			self:visible(true):linear(0.15):diffusealpha(1)
+			self:playcommand("RunLoadSequence")
+		end,
 
-			-- 2) Write the profile JSON + trigger for the worker.
-			pendingStamp = tostring(GetTimeSinceStart())
-			WritePlayerFiles(pendingStamp)
-
-			-- 3) Poll for the worker's ack (or time out), then reload.
-			pollElapsed = 0
-			self:queuecommand("Poll")
+		-- On-demand refresh: ManagePacks broadcasts this after saving mapping.json so
+		-- the worker rebuilds PlayerSongs and the wheel picks up the change this session.
+		-- The broadcast reaches all gate instances (SelectMusic/Casual/Course); only the
+		-- one on the currently-active screen responds. Deliberately bypasses the
+		-- once-per-cycle `hasRun` guard -- a manual pack edit is explicit and repeatable.
+		PackManagerRefreshMessageCommand=function(self)
+			local top = SCREENMAN:GetTopScreen()
+			if not top or top:GetName() ~= screenName then return end
+			self:playcommand("RunLoadSequence")
 		end,
 
 		PollCommand=function(self)
@@ -326,9 +344,9 @@ end
 local t = {}
 
 -- Register the gate on each screen that can immediately follow ScreenProfileLoad.
-t["ScreenSelectMusic"]       = MakeGate()
-t["ScreenSelectMusicCasual"] = MakeGate()
-t["ScreenSelectCourse"]      = MakeGate()
+t["ScreenSelectMusic"]       = MakeGate("ScreenSelectMusic")
+t["ScreenSelectMusicCasual"] = MakeGate("ScreenSelectMusicCasual")
+t["ScreenSelectCourse"]      = MakeGate("ScreenSelectCourse")
 
 -- Session end / profile unload. Fired on the first end-of-session screen we hit:
 --   * ScreenGameOver -- the reliable end-of-game screen, reached BEFORE the attract
