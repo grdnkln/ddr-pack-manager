@@ -211,15 +211,14 @@ local function AddBoxVisuals(af, labelText)
 	return af
 end
 
--- A joined player "counts" for pack loading only if they loaded a real Player
--- Profile (local or USB/memory card -> IsPersistentProfile) or logged into
--- GrooveStats (a non-empty ApiKey). Pure guests -- no profile, no GrooveStats --
--- get none of the pack load/unload behavior.
+-- A joined player "counts" for pack loading only if they logged into GrooveStats
+-- (non-empty username). That username is the key the worker uses to pick packs, so
+-- it's the only thing that matters -- a local profile without GrooveStats does not
+-- qualify. Players with no GrooveStats login get none of the pack behavior.
 local function AnyHumanPlayerQualifies()
 	for player in ivalues(GAMESTATE:GetHumanPlayers()) do
 		local pn = ToEnumShortString(player)
-		if PROFILEMAN:IsPersistentProfile(player)
-		or (SL[pn].ApiKey ~= nil and SL[pn].ApiKey ~= "") then
+		if SL[pn].GrooveStatsUsername ~= nil and SL[pn].GrooveStatsUsername ~= "" then
 			return true
 		end
 	end
