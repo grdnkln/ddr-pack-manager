@@ -1,5 +1,5 @@
 {
-  "mapping_file": "/home/USERNAME/.itgmania/SongLibrary/mapping.json",
+  "mapping_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/mapping.json",
   "song_library": "/home/USERNAME/.itgmania/SongLibrary",
   "player_songs": "/home/USERNAME/.itgmania/PlayerSongs",
   "trigger_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/trigger.txt",
