@@ -1,0 +1,11 @@
+{
+  "mapping_file": "/home/USERNAME/.itgmania/SongLibrary/mapping.json",
+  "song_library": "/home/USERNAME/.itgmania/SongLibrary",
+  "player_songs": "/home/USERNAME/.itgmania/PlayerSongs",
+  "trigger_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/trigger.txt",
+  "status_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/packmanager-status.txt",
+  "p1_json_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/P1.json",
+  "p2_json_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/P2.json",
+  "log_file": "/home/USERNAME/.itgmania/Save/PlayerLoadHook/packmanager.log",
+  "poll_interval": 1.0
+}

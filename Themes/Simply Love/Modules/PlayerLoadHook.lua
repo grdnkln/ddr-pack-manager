@@ -45,7 +45,13 @@
 -- process directly; we write signal files with the engine's RageFile API and an
 -- external watcher reacts to them.
 
-local HOLD_SECONDS = 5
+-- Max time to wait for the external pack worker (packmanager.py) to finish and
+-- acknowledge before we give up and reload anyway. Its ack is polled from
+-- packmanager-status.txt every POLL_INTERVAL.
+local TIMEOUT_SECONDS = 10
+local POLL_INTERVAL = 0.1
+local STATUS_FILE = "/Save/PlayerLoadHook/packmanager-status.txt"
+
 local hasRun = false  -- shared across all screen entries below (file-closure upvalue)
 -- Set true once a profile has been loaded this cycle (packs may be in PlayerSongs);
 -- consumed at the title to run exactly one full cleanup reload, which also breaks
@@ -61,6 +67,29 @@ local function WriteFile(path, contents)
 		f:Close()
 	end
 	f:destroy()
+end
+
+-- Read a whole file from the engine's virtual FS (returns nil if it can't be
+-- opened). Used to poll the worker's status file.
+local function ReadFile(path)
+	local f = RageFileUtil.CreateRageFile()
+	local contents = nil
+	if f:Open(path, 1) then  -- 1 == read
+		contents = f:Read()
+		f:Close()
+	end
+	f:destroy()
+	return contents
+end
+
+-- The worker writes packmanager-status.txt as two lines: "done" then the trigger
+-- timestamp it just processed. Work is complete once that echoed stamp matches the
+-- one we wrote for the current event (so we never react to a stale/previous ack).
+local function WorkerAcked(stamp)
+	local s = ReadFile(STATUS_FILE)
+	if not s then return false end
+	local state, echoed = s:match("^%s*(%S+)%s+(%S+)")
+	return state == "done" and echoed == stamp
 end
 
 -- No-argument Profile getters that return a scalar (string/number/bool/enum).
@@ -112,7 +141,7 @@ local function ProfileToTable(profile)
 	return out
 end
 
-local function WritePlayerFiles()
+local function WritePlayerFiles(stamp)
 	for player in ivalues(GAMESTATE:GetHumanPlayers()) do
 		local pn = ToEnumShortString(player)  -- "P1" / "P2"
 
@@ -135,21 +164,22 @@ local function WritePlayerFiles()
 	end
 
 	-- Single combined signal file that changes on every run, for the watcher.
+	-- `stamp` is the correlation key the worker echoes back in its status file.
 	WriteFile("/Save/PlayerLoadHook/trigger.txt",
-		"players_loaded\n"..tostring(GetTimeSinceStart()).."\n")
+		"players_loaded\n"..stamp.."\n")
 
 	Trace("[PlayerLoadHook] wrote player profile JSON to /Save/PlayerLoadHook/")
 end
 
 -- Called when the session ends and profiles are unloaded (end of game / return
 -- to title). Empties the per-player JSON files and updates the trigger.
-local function ClearPlayerFiles()
+local function ClearPlayerFiles(stamp)
 	-- Opening in write mode truncates, so this leaves each file empty.
 	WriteFile("/Save/PlayerLoadHook/P1.json", "")
 	WriteFile("/Save/PlayerLoadHook/P2.json", "")
 
 	WriteFile("/Save/PlayerLoadHook/trigger.txt",
-		"players_unloaded\n"..tostring(GetTimeSinceStart()).."\n")
+		"players_unloaded\n"..stamp.."\n")
 
 	Trace("[PlayerLoadHook] cleared player JSON (profiles unloaded)")
 end
@@ -228,6 +258,10 @@ end
 -- The "Setting up song packs" gate, hosted on each song-select screen. One is
 -- created per host screen; they all share the upvalues above.
 local function MakeGate()
+	-- Per-instance handshake state (only one gate runs per cycle via `hasRun`).
+	local pendingStamp = nil
+	local pollElapsed = 0
+
 	local af = Def.ActorFrame{
 		InitCommand=function(self)
 			self:Center():draworder(2000):visible(false):diffusealpha(0)
@@ -250,11 +284,22 @@ local function MakeGate()
 			--    player can still use the song wheel / sort menu behind the box.)
 			self:visible(true):linear(0.15):diffusealpha(1)
 
-			-- 2) Write the profile JSON right away.
-			WritePlayerFiles()
+			-- 2) Write the profile JSON + trigger for the worker.
+			pendingStamp = tostring(GetTimeSinceStart())
+			WritePlayerFiles(pendingStamp)
 
-			-- 3) Pause 5 seconds, then reload.
-			self:sleep(HOLD_SECONDS):queuecommand("Finish")
+			-- 3) Poll for the worker's ack (or time out), then reload.
+			pollElapsed = 0
+			self:queuecommand("Poll")
+		end,
+
+		PollCommand=function(self)
+			if WorkerAcked(pendingStamp) or pollElapsed >= TIMEOUT_SECONDS then
+				self:queuecommand("Finish")
+				return
+			end
+			pollElapsed = pollElapsed + POLL_INTERVAL
+			self:sleep(POLL_INTERVAL):queuecommand("Poll")
 		end,
 
 		FinishCommand=function(self)
@@ -302,6 +347,9 @@ t["ScreenSelectCourse"]      = MakeGate()
 --   * breaks the loop -- ScreenReloadSongs returns to the title, and on that second
 --     arrival reloadPending is already false, so we don't reload again.
 local function MakeUnloadHook(screenName)
+	local pendingStamp = nil
+	local pollElapsed = 0
+
 	local af = Def.ActorFrame{
 		InitCommand=function(self)
 			self:Center():draworder(2000):visible(false):diffusealpha(0)
@@ -312,9 +360,23 @@ local function MakeUnloadHook(screenName)
 			if not reloadPending then return end
 			reloadPending = false
 
-			ClearPlayerFiles()
+			pendingStamp = tostring(GetTimeSinceStart())
+			ClearPlayerFiles(pendingStamp)
 			self:visible(true):linear(0.15):diffusealpha(1)
-			self:sleep(HOLD_SECONDS):queuecommand("Finish")
+
+			-- Wait for the worker to clear PlayerSongs (or time out) before the
+			-- full reload, so removed packs are actually gone when we re-scan.
+			pollElapsed = 0
+			self:queuecommand("Poll")
+		end,
+
+		PollCommand=function(self)
+			if WorkerAcked(pendingStamp) or pollElapsed >= TIMEOUT_SECONDS then
+				self:queuecommand("Finish")
+				return
+			end
+			pollElapsed = pollElapsed + POLL_INTERVAL
+			self:sleep(POLL_INTERVAL):queuecommand("Poll")
 		end,
 
 		FinishCommand=function(self)
