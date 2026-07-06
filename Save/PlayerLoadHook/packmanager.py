@@ -86,6 +86,10 @@ def load_config():
             if isinstance(user, dict):
                 for k, v in user.items():
                     if k in cfg and v not in (None, ""):
+                        # Path values may use ~ / $VARS; expand them (poll_interval
+                        # is numeric and left untouched).
+                        if isinstance(v, str):
+                            v = os.path.expanduser(os.path.expandvars(v))
                         cfg[k] = v
         else:
             os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
