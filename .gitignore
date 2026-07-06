@@ -30,6 +30,11 @@ Save/PlayerLoadHook/packmanager-status.txt
 Save/PlayerLoadHook/packmanager.log
 Save/PlayerLoadHook/songlibrary-sync.log
 
+# live songlibrary-sync config + runtime state (keep hostname / host key out of git)
+Save/PlayerLoadHook/songlibrary-sync.config.sh
+Save/PlayerLoadHook/songlibrary-sync.known_hosts
+Save/PlayerLoadHook/songlibrary-sync.lock
+
 # python dependencies
 Save/PlayerLoadHook/__pycache__
 

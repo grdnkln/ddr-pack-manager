@@ -6,10 +6,12 @@
 # hand.
 #
 # What it does:
-#   rsync (over SSH) the contents of  ddr@simfiles.example.com:/srv/simfiles/
-#   into  ~/.itgmania/SongLibrary/ , DELETING anything locally that no longer
-#   exists on the remote (--delete). The transfer is one-way: the remote is the
-#   source of truth; local-only files are removed.
+#   rsync (over SSH) the contents of the configured remote simfile host into
+#   ~/.itgmania/SongLibrary/ , DELETING anything locally that no longer exists on
+#   the remote (--delete). The transfer is one-way: the remote is the source of
+#   truth; local-only files are removed. The remote (user/host/path), the local
+#   SongLibrary and the SSH key are set in songlibrary-sync.config.sh (see the
+#   Configuration section below).
 #
 # The SSH connection goes through the Cloudflare named tunnel (cloudflared
 # ProxyCommand) and authenticates with a public key. ALL connection parameters are
@@ -33,37 +35,50 @@
 set -euo pipefail
 
 # --------------------------------------------------------------------------- #
-# Configuration -- edit these to taste. Every value can also be overridden from
-# the environment (e.g. `SSH_KEY=~/.ssh/other rsync ... DRY_RUN=1 ./songlibrary-sync.sh`).
+# Configuration
+#
+# All site-specific settings (server hostname, remote/local paths, SSH key) live
+# in a separate config file that is NOT tracked in git, so the repo never contains
+# a real hostname or key location. Copy the example and edit it:
+#     cp songlibrary-sync.config.example.sh songlibrary-sync.config.sh
+# Point at a different config with SONGLIBRARY_SYNC_CONFIG=/path, or override any
+# single value from the environment (e.g. `DRY_RUN=1 ./songlibrary-sync.sh`).
 # --------------------------------------------------------------------------- #
-
-# Remote (DDRPACKS simfile host, reached through the Cloudflare tunnel).
-REMOTE_USER="${REMOTE_USER:-ddr}"
-REMOTE_HOST="${REMOTE_HOST:-simfiles.example.com}"
-REMOTE_PATH="${REMOTE_PATH:-/srv/simfiles}"
-
-# Local destination -- the ITGMania SongLibrary the pack worker reads from.
-SONGLIBRARY="${SONGLIBRARY:-$HOME/.itgmania/SongLibrary}"
-
-# SSH private key for public-key auth. Uses the user's existing id_ed25519 (its
-# public half, ~/.ssh/id_ed25519.pub, must be in the server's authorized_keys) --
-# no separate key is minted for this sync. No agent/other identities are used.
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
 
 # Where this script and its runtime state (lock, known_hosts, log) live.
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load the site config. Environment values already set take precedence, because
+# the config assigns with ${VAR:-...}.
+CONFIG_FILE="${SONGLIBRARY_SYNC_CONFIG:-$SCRIPT_DIR/songlibrary-sync.config.sh}"
+if [ -f "$CONFIG_FILE" ]; then
+	# shellcheck source=/dev/null
+	. "$CONFIG_FILE"
+else
+	echo "config file not found: $CONFIG_FILE" >&2
+	echo "copy songlibrary-sync.config.example.sh to songlibrary-sync.config.sh and edit it" >&2
+	exit 1
+fi
+
+# Fall back to safe defaults for anything the config (and environment) left unset.
+# REMOTE_HOST has no default on purpose -- it's required and site-specific.
+REMOTE_USER="${REMOTE_USER:-ddr}"
+REMOTE_HOST="${REMOTE_HOST:-}"
+REMOTE_PATH="${REMOTE_PATH:-/srv/simfiles}"
+SONGLIBRARY="${SONGLIBRARY:-$HOME/.itgmania/SongLibrary}"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_ed25519}"
+MAX_DELETE="${MAX_DELETE:-200}"
+DRY_RUN="${DRY_RUN:-0}"
+
+if [ -z "$REMOTE_HOST" ]; then
+	echo "REMOTE_HOST is not set; edit $CONFIG_FILE (see songlibrary-sync.config.example.sh)" >&2
+	exit 1
+fi
+
+# Runtime state paths, kept next to the script (not usually customized).
 KNOWN_HOSTS="${KNOWN_HOSTS:-$SCRIPT_DIR/songlibrary-sync.known_hosts}"
 LOCK_FILE="${LOCK_FILE:-$SCRIPT_DIR/songlibrary-sync.lock}"
 LOG_FILE="${LOG_FILE:-$SCRIPT_DIR/songlibrary-sync.log}"
-
-# Safety valve: abort all deletions if rsync would remove more than this many
-# entries in one run. Guards against wiping SongLibrary when the remote briefly
-# looks empty (e.g. its backing mount is offline). Raise it for large intentional
-# prunes, or set to 0 to disable the cap.
-MAX_DELETE="${MAX_DELETE:-200}"
-
-# Set DRY_RUN=1 to show what would change without touching anything.
-DRY_RUN="${DRY_RUN:-0}"
 
 # --------------------------------------------------------------------------- #
 # Logging -- everything goes to both stdout (journal, when run by systemd) and a

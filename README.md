@@ -80,7 +80,13 @@ python3 ~/.itgmania/Save/PlayerLoadHook/packmanager.py
 Configuration lives in `packmanager.config.json` (paths + poll interval); a default file is written on first run, and `~`/`$VARS` in path values are expanded.
 
 ### `Save/PlayerLoadHook/songlibrary-sync.sh`
-Keeps `SongLibrary` in sync with the remote simfile host. It `rsync`s `ddr@simfiles.example.com:/srv/simfiles/` into `~/.itgmania/SongLibrary/` over SSH, tunneled through Cloudflare Access (`cloudflared` ProxyCommand) with public-key auth. The transfer is one-way (remote is the source of truth) and deletes local-only packs, with a `--max-delete` safety cap so a briefly-empty remote can't wipe the library. All SSH parameters are baked in (`-F /dev/null`); a `flock` prevents overlapping runs.
+Keeps `SongLibrary` in sync with the remote simfile host. It `rsync`s the configured remote path into `~/.itgmania/SongLibrary/` over SSH, tunneled through Cloudflare Access (`cloudflared` ProxyCommand) with public-key auth. The transfer is one-way (remote is the source of truth) and deletes local-only packs, with a `--max-delete` safety cap so a briefly-empty remote can't wipe the library. All SSH parameters are baked in (`-F /dev/null`); a `flock` prevents overlapping runs.
+
+Site-specific settings (server hostname, remote/local paths, SSH key) live in `songlibrary-sync.config.sh`, which is **git-ignored** so no hostname or key location is committed. Copy the tracked template to get started:
+```bash
+cp songlibrary-sync.config.example.sh songlibrary-sync.config.sh
+$EDITOR songlibrary-sync.config.sh
+```
 
 The paired **`songlibrary-sync.service`** / **`songlibrary-sync.timer`** are *sample* systemd **user** units (not installed automatically) that run the sync ~hourly. Install instructions are in the header of the `.service` file.
 
