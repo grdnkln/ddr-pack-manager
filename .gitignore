@@ -1,19 +1,40 @@
+# misc itgmania folders
+Announcers/
+BackgroundEffects/
+BackgroundTransitions/
+BGAnimations/
+Cache/
+CDTitles/
+Characters/
+Courses/
+Downloads/
+NoteSkins/
+Packages/
+PlayerSongs/
+RandomMovies/
+Screenshots/
 Logs/
 Songs/
+
+# added simfiles
 PlayerSongs/
 SongLibrary/
-Save/PlayerLoadHook/P1.json
-Save/PlayerLoadHook/P2.json
-Save/PlayerLoadHook/trigger.txt
-Save/PlayerLoadHook/__pycache__
-Save/PlayerLoadHook/packmanager.status.txt
-Save/*.ini
-Save/*.xml
-Save/PlayerLoadHook/packmanager-status.txt
-Save/PlayerLoadHook/packmanager.log
+
+# dynamic status data
 Save/PlayerLoadHook/mapping.json
 Save/PlayerLoadHook/packs.json
+Save/PlayerLoadHook/trigger.txt
+Save/PlayerLoadHook/P1.json
+Save/PlayerLoadHook/P2.json
+Save/PlayerLoadHook/packmanager-status.txt
+Save/PlayerLoadHook/packmanager.log
+Save/PlayerLoadHook/songlibrary-sync.log
+
+# python dependencies
+Save/PlayerLoadHook/__pycache__
+
+# itgmania-specific files in the Save subfolder
+Save/*.ini
+Save/*.xml
 Save/MachineProfile
 Save/LocalProfiles
-Cache/
-Save/PlayerLoadHook/songlibrary-sync.log
