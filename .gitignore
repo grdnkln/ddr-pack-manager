@@ -11,6 +11,7 @@ Save/*.ini
 Save/*.xml
 Save/PlayerLoadHook/packmanager-status.txt
 Save/PlayerLoadHook/packmanager.log
+Save/PlayerLoadHook/mapping.json
 Save/MachineProfile
 Save/LocalProfiles
 Cache/
