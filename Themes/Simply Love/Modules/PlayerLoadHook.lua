@@ -6,7 +6,7 @@
 --
 -- Behavior (once per game cycle, on reaching song select == the screen right
 -- after profiles load):
---   1. Show a "Setting up song packs" box.
+--   1. Show a "Loading additional song packs" box.
 --   2. Write each player's full profile as pretty JSON to disk.
 --   3. Pause 5 seconds.
 --   4. Fade the box out and trigger a differential "Load New Songs" reload
@@ -48,7 +48,7 @@
 -- Max time to wait for the external pack worker (packmanager.py) to finish and
 -- acknowledge before we give up and reload anyway. Its ack is polled from
 -- packmanager-status.txt every POLL_INTERVAL.
-local TIMEOUT_SECONDS = 10
+local TIMEOUT_SECONDS = 5
 local POLL_INTERVAL = 0.1
 local STATUS_FILE = "/Save/PlayerLoadHook/packmanager-status.txt"
 
@@ -57,6 +57,13 @@ local hasRun = false  -- shared across all screen entries below (file-closure up
 -- consumed at the title to run exactly one full cleanup reload, which also breaks
 -- the reload->title->reload loop.
 local reloadPending = false
+-- Set true after the one-time boot crash-recovery check runs (see MakeUnloadHook),
+-- so it fires at most once per game process.
+local bootChecked = false
+
+-- Only these (the first module-attached screen at launch) trigger the boot check.
+-- ScreenGameOver also uses MakeUnloadHook but is never the first screen at boot.
+local TITLE_SCREENS = { ScreenTitleMenu=true, ScreenTitleJoin=true }
 
 -- Write a string to a path in the engine's virtual FS.
 -- "/Save/..." maps to the real Save dir (on Linux: ~/.itgmania/Save/).
@@ -184,6 +191,24 @@ local function ClearPlayerFiles(stamp)
 	Trace("[PlayerLoadHook] cleared player JSON (profiles unloaded)")
 end
 
+-- Detect leftover profile data from a previous run that crashed while a profile
+-- was loaded. A clean unload empties P1/P2.json to "" (see ClearPlayerFiles), so
+-- any non-empty, non-"{}" content means the last session never unloaded and the
+-- worker's PlayerSongs symlinks are likely still in place. Returns true if either
+-- file looks stale.
+local function HasStaleProfileData()
+	for _, pn in ipairs({ "P1", "P2" }) do
+		local raw = ReadFile("/Save/PlayerLoadHook/"..pn..".json")
+		if raw then
+			local trimmed = raw:gsub("^%s+", ""):gsub("%s+$", "")
+			if trimmed ~= "" and trimmed ~= "{}" then
+				return true
+			end
+		end
+	end
+	return false
+end
+
 -- Trigger a FULL song reload (engine ScreenReloadSongs: OnlyLoadAdditions=false),
 -- which re-scans every song root -- including the PlayerSongs additional folder --
 -- so packs whose symlinks were removed actually disappear. Its NextScreen is the
@@ -255,7 +280,7 @@ local function AnyHumanPlayerQualifies()
 	return false
 end
 
--- The "Setting up song packs" gate, hosted on each song-select screen. One is
+-- The "Loading additional song packs" gate, hosted on each song-select screen. One is
 -- created per host screen; they all share the upvalues above.
 local function MakeGate(screenName)
 	-- Per-instance handshake state (only one gate runs per cycle via `hasRun`).
@@ -338,7 +363,7 @@ local function MakeGate(screenName)
 			end
 		end,
 	}
-	return AddBoxVisuals(af, "Setting up song packs")
+	return AddBoxVisuals(af, "Loading additional song packs")
 end
 
 local t = {}
@@ -356,7 +381,7 @@ t["ScreenSelectCourse"]      = MakeGate("ScreenSelectCourse")
 --   * ScreenTitleMenu / ScreenTitleJoin -- the backout-from-song-select path (no
 --     Game Over), and where the once-per-cycle load guard is reset.
 --
--- We clear the JSON, show the "Unloading song packs" box, wait 5s (placeholder for
+-- We clear the JSON, show the "Restoring song packs" box, wait 5s (placeholder for
 -- the future worker clearing symlinks), then full-reload -- only when a profile was
 -- actually loaded this cycle (reloadPending). Game Over stays up ~23s (TimerSeconds),
 -- so the 5s box completes well before it would time out into attract. reloadPending
@@ -375,9 +400,32 @@ local function MakeUnloadHook(screenName)
 
 		ModuleCommand=function(self)
 			hasRun = false
+
+			-- One-time boot crash recovery (runs at most once per process, only on
+			-- the first title screen). If the previous run crashed while a profile
+			-- was loaded, P1/P2.json still hold profile data and the worker's
+			-- PlayerSongs symlinks are stale. Clear the JSON, signal the worker to
+			-- wipe PlayerSongs, wait for its ack (or time out), then full-reload to
+			-- a clean "no player / base library" state. Uses the same box + poll +
+			-- timeout + reload sequence as the normal unload below.
+			if not bootChecked and TITLE_SCREENS[screenName] then
+				bootChecked = true
+				if HasStaleProfileData() then
+					Trace("[PlayerLoadHook] stale profile JSON at boot; recovering to clean state")
+					self:playcommand("RunUnloadSequence")
+					return
+				end
+			end
+
 			if not reloadPending then return end
 			reloadPending = false
+			self:playcommand("RunUnloadSequence")
+		end,
 
+		-- Shared "clear JSON + signal worker + poll for ack (with timeout) + full
+		-- reload" sequence. Driven by the normal end-of-session unload and by the
+		-- one-time boot crash recovery above.
+		RunUnloadSequenceCommand=function(self)
 			pendingStamp = tostring(GetTimeSinceStart())
 			ClearPlayerFiles(pendingStamp)
 			self:visible(true):linear(0.15):diffusealpha(1)
@@ -412,7 +460,7 @@ local function MakeUnloadHook(screenName)
 			end
 		end,
 	}
-	return AddBoxVisuals(af, "Unloading song packs")
+	return AddBoxVisuals(af, "Restoring song packs")
 end
 t["ScreenGameOver"] = MakeUnloadHook("ScreenGameOver")
 t["ScreenTitleMenu"] = MakeUnloadHook("ScreenTitleMenu")
