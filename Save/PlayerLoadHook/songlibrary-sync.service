@@ -1,0 +1,38 @@
+# SAMPLE systemd service -- NOT installed automatically.
+#
+# Pairs with songlibrary-sync.timer to pull the DDRPACKS simfile host into the
+# local ITGMania SongLibrary on a schedule. This is a oneshot unit: the timer
+# starts it, it runs songlibrary-sync.sh once, then exits.
+#
+# Install as a *user* unit (recommended -- runs as your login user, uses your
+# cloudflared/SSH credentials):
+#     mkdir -p ~/.config/systemd/user
+#     cp songlibrary-sync.service songlibrary-sync.timer ~/.config/systemd/user/
+#     systemctl --user daemon-reload
+#     systemctl --user enable --now songlibrary-sync.timer
+#     # let user services run without an active login session:
+#     loginctl enable-linger "$USER"
+#
+# Check on it:
+#     systemctl --user list-timers songlibrary-sync.timer
+#     systemctl --user status songlibrary-sync.service
+#     journalctl --user -u songlibrary-sync.service -n 50
+#
+# Trigger a manual run:
+#     systemctl --user start songlibrary-sync.service
+
+[Unit]
+Description=Sync DDRPACKS simfiles into ITGMania SongLibrary
+Documentation=file:%h/.itgmania/Save/PlayerLoadHook/songlibrary-sync.sh
+# Only meaningful with network; harmless for a --user unit.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.itgmania/Save/PlayerLoadHook/songlibrary-sync.sh
+# Don't let a single run hang forever (the script also has its own rsync timeout).
+TimeoutStartSec=1800
+# Be gentle: this is background maintenance, not interactive.
+Nice=10
+IOSchedulingClass=idle

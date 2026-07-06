@@ -1,0 +1,21 @@
+# SAMPLE systemd timer -- NOT installed automatically.
+#
+# Runs songlibrary-sync.service about once an hour. See the header of
+# songlibrary-sync.service for install instructions.
+
+[Unit]
+Description=Hourly DDRPACKS -> SongLibrary sync
+Documentation=file:%h/.itgmania/Save/PlayerLoadHook/songlibrary-sync.service
+
+[Timer]
+# Fire ~1 minute after boot/login, then every hour.
+OnBootSec=1min
+OnUnitActiveSec=1h
+# Spread the load / avoid every cabinet hitting the server on the exact hour.
+RandomizedDelaySec=5min
+# If the machine was off when a run was due, run once soon after it comes back.
+Persistent=true
+Unit=songlibrary-sync.service
+
+[Install]
+WantedBy=timers.target
